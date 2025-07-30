@@ -22,8 +22,6 @@ async def main() -> None:
     # Initialize the Mistral client
     client = Mistral(settings.MISTRAL_API_KEY)
 
-    print(cwd)
-
     # Define parameters for the local MCP server
     server_params = StdioServerParameters(
         command="python",
