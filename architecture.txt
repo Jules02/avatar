@@ -1,0 +1,38 @@
+┌─────────────────────────────────────────────────────────┐
+│                    LLM (e.g., GPT-4)                    │
+│  (Natural Language Understanding & Generation)          │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│                      Agent                              │
+│  (Orchestrates tools, maintains context, makes         │
+│   decisions based on LLM output and available tools)    │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│                    MCP Client                           │
+│  (Manages communication with MCP server,               │
+│   handles protocol details)                             │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│                    MCP Server                           │
+│  (Your implementation in mcp_server.py - exposes       │
+│   Kimble functionality as RPC endpoints)                │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│                    KimbleClient                         │
+│  (Handles Kimble API specifics, authentication,         │
+│   request/response transformation)                      │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Kimble API                           │
+│  (External service you're integrating with)             │
+└─────────────────────────────────────────────────────────┘
