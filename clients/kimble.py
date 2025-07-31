@@ -6,7 +6,7 @@ import random
 import logging
 from uuid import uuid4
 
-from ..exceptions import KimbleError, ValidationError as AvatarValidationError, handle_error
+from exceptions import KimbleError, ValidationError as AvatarValidationError, handle_error
 
 logger = logging.getLogger(__name__)
 

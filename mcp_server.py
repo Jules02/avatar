@@ -23,22 +23,22 @@ class Config(BaseModel):
     """Configuration for the Kimble MCP server."""
     KIMBLE_BASE_URL: str = os.getenv("KIMBLE_BASE_URL", "https://api.kimble.example.com")
     KIMBLE_API_KEY: str = os.getenv("KIMBLE_API_KEY", "")
-    
-    @field_validator('KIMBLE_BASE_URL')
-    @classmethod
-    def validate_base_url(cls, v: str) -> str:
-        if not v:
-            raise ValueError("KIMBLE_BASE_URL must be set")
-        if not v.startswith(('http://', 'https://')):
-            raise ValueError("KIMBLE_BASE_URL must start with http:// or https://")
-        return v
-    
-    @field_validator('KIMBLE_API_KEY')
-    @classmethod
-    def validate_api_key(cls, v: str) -> str:
-        if not v:
-            raise ValueError("KIMBLE_API_KEY must be set")
-        return v
+    #
+    # @field_validator('KIMBLE_BASE_URL')
+    # @classmethod
+    # def validate_base_url(cls, v: str) -> str:
+    #     if not v:
+    #         raise ValueError("KIMBLE_BASE_URL must be set")
+    #     if not v.startswith(('http://', 'https://')):
+    #         raise ValueError("KIMBLE_BASE_URL must start with http:// or https://")
+    #     return v
+    #
+    # @field_validator('KIMBLE_API_KEY')
+    # @classmethod
+    # def validate_api_key(cls, v: str) -> str:
+    #     if not v:
+    #         raise ValueError("KIMBLE_API_KEY must be set")
+    #     return v
     
     class Config:
         env_file = ".env"
