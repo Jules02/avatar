@@ -327,11 +327,11 @@ class KimbleClient:
             logger.error(f"Unexpected error in count_absences: {e}", exc_info=True)
             raise KimbleError(f"Unexpected error: {e}")
 
-    async def submit_week(self, user_id: int, week_no: int) -> Dict[str, Any]:
+    async def submit_week(self, user_id: str, week_no: int) -> Dict[str, Any]:
         """Submit a week for approval (fake implementation).
 
         Args:
-            user_id: ID of the user
+            user_id: UUID of the user
             week_no: Week number to submit (1-53)
 
         Returns:
@@ -369,7 +369,7 @@ class KimbleClient:
         """Get absences for a user within a date range (fake implementation).
         
         Args:
-            user_id: ID of the user
+            user_id: UUID of the user
             date_range: Date range to search for absences
             
         Returns:
@@ -414,7 +414,7 @@ class KimbleClient:
         except Exception as e:
             handle_error(e)
 
-    async def count_absences(self, user_id: int, date_range: DateRange) -> int:
+    async def count_absences(self, user_id: str, date_range: DateRange) -> int:
         """Count absences for a user within a date range.
         
         Args:
@@ -427,7 +427,7 @@ class KimbleClient:
         absences = await self.get_absences(user_id, date_range)
         return len(absences)
 
-    async def is_absent(self, user_id: int, check_date: date) -> bool:
+    async def is_absent(self, user_id: str, check_date: date) -> bool:
         """Check if a user is absent on a specific date (fake implementation).
         
         Args:

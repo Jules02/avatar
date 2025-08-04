@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from fuzzywuzzy import process
 from mcp.server.fastmcp import FastMCP
@@ -64,7 +64,7 @@ except Exception as e:
     raise
 
 @mcp.tool()
-async def kimble_fill_absence(user_id: str, absence_date: str) -> Dict[str, Any]:
+async def fill_absence(user_id: str, absence_date: str) -> Dict[str, Any]:
     """
     Fill an absence for a given date on the Kimble database.
 
@@ -79,8 +79,6 @@ async def kimble_fill_absence(user_id: str, absence_date: str) -> Dict[str, Any]
         HTTPException: With status code 400 for validation errors or 500 for server errors
     """
     try:
-        if not user_id or not isinstance(user_id, str):
-            raise ValidationError("User ID must be a valid UUID string")
             
         try:
             absence_date_obj = datetime.strptime(absence_date, "%Y-%m-%d").date()
@@ -109,16 +107,17 @@ async def kimble_fill_absence(user_id: str, absence_date: str) -> Dict[str, Any]
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @mcp.tool()
-async def kimble_submit_week(user_id: int, week_no: int) -> Dict[str, Any]:
+async def get_week_absences(user_id: str, year: int, week_no: int) -> Dict[str, Any]:
     """
-    Submit a week to the Kimble database, sending an email to the manager for approval.
+    Get all absences for a specific week.
 
     Args:
-        user_id: The ID of the user (must be positive integer)
-        week_no: The number of the week to submit (1-53)
+        user_id: The UUID of the user
+        year: The year (e.g., 2025)
+        week_no: The ISO week number (1-53)
 
     Returns:
-        Dict containing the result of the operation
+        Dict containing the list of absences for the specified week
         
     Raises:
         HTTPException: With status code 400 for validation errors or 500 for server errors
@@ -126,15 +125,92 @@ async def kimble_submit_week(user_id: int, week_no: int) -> Dict[str, Any]:
     try:
         if not isinstance(week_no, int) or not (1 <= week_no <= 53):
             raise ValidationError("Week number must be between 1 and 53")
+            
+        # Calculate start and end of the ISO week
+        # Using isocalendar() for proper ISO week handling
+        first_day = datetime.strptime(f"{year}-{week_no}-1", "%G-%V-%u").date()
+        last_day = first_day + timedelta(days=6)
+
+        date_range_obj = DateRange(start=first_day, end=last_day)
         
-        # Call Kimble client
+        # Get absences for the week
+        absences = await kimble_client.get_absences(
+            user_id=user_id,
+            date_range=date_range_obj,
+        )
+        
+        return {
+            "status": "success",
+            "data": {
+                "year": year,
+                "week_no": week_no,
+                "start_date": first_day.isoformat(),
+                "end_date": last_day.isoformat(),
+                "absences": absences
+            }
+        }
+        
+    except ValidationError as e:
+        logger.warning(f"Validation error in get_week_absences: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    except KimbleError as e:
+        logger.error(f"Kimble service error in get_week_absences: {e}")
+        raise HTTPException(status_code=502, detail=f"Kimble service error: {e}")
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in get_week_absences: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@mcp.tool()
+async def submit_week(user_id: str, year: int, week_no: int, confirmed: bool = False) -> Dict[str, Any]:
+    """
+    Submit a week to the Kimble database, sending an email to the manager for approval.
+    
+    This will first check for any absences in the specified week and require confirmation
+    before proceeding with the submission.
+
+    Args:
+        user_id: The UUID of the user
+        year: The year (e.g., 2025)
+        week_no: The ISO week number (1-53)
+        confirmed: Whether the user has confirmed the submission after reviewing absences
+
+    Returns:
+        Dict containing the result of the operation or the list of absences for review
+        
+    Raises:
+        HTTPException: With status code 400 for validation errors or 500 for server errors
+    """
+    try:
+        if not isinstance(week_no, int) or not (1 <= week_no <= 53):
+            raise ValidationError("Week number must be between 1 and 53")
+            
+        # First, get absences for the week
+        week_data = await get_week_absences(user_id, year, week_no)
+        absences = week_data["data"]["absences"]
+        
+        # If there are absences and not confirmed, return them for review
+        if absences and not confirmed:
+            return {
+                "status": "review_required",
+                "message": "Please review the following absences before submission",
+                "data": week_data["data"],
+                "confirmation_required": True
+            }
+        
+        # If confirmed or no absences, proceed with submission
         result = await kimble_client.submit_week(
             user_id=user_id,
             week_no=week_no
         )
         
         logger.info(f"Successfully submitted week {week_no} for user {user_id}")
-        return {"status": "success", "data": result}
+        return {
+            "status": "success",
+            "message": "Week submitted successfully",
+            "data": result
+        }
         
     except ValidationError as e:
         logger.warning(f"Validation error in kimble_submit_week: {e}")
@@ -149,7 +225,7 @@ async def kimble_submit_week(user_id: int, week_no: int) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @mcp.tool()
-async def kimble_is_absent(user_id: str, date: str) -> Dict[str, Any]:
+async def is_absent(user_id: str, date: str) -> Dict[str, Any]:
     """
     Check if a user is absent on a given date.
 
@@ -206,7 +282,7 @@ async def kimble_is_absent(user_id: str, date: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @mcp.tool()
-async def kimble_get_absences(user_id: str, date_range: Dict[str, str]) -> Dict[str, Any]:
+async def get_absences(user_id: str, date_range: Dict[str, str]) -> Dict[str, Any]:
     """
     Get all absences for a given user within a specified date range.
 
@@ -257,19 +333,19 @@ async def kimble_get_absences(user_id: str, date_range: Dict[str, str]) -> Dict[
         }
         
     except ValidationError as e:
-        logger.warning(f"Validation error in kimble_get_absences: {e}")
+        logger.warning(f"Validation error in get_absences: {e}")
         raise HTTPException(status_code=400, detail=str(e))
         
     except KimbleError as e:
-        logger.error(f"Kimble service error in kimble_get_absences: {e}")
+        logger.error(f"Kimble service error in get_absences: {e}")
         raise HTTPException(status_code=502, detail=f"Kimble service error: {e}")
         
     except Exception as e:
-        logger.error(f"Unexpected error in kimble_get_absences: {e}", exc_info=True)
+        logger.error(f"Unexpected error in get_absences: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @mcp.tool()
-async def kimble_count_absences(user_id: str, date_range: Dict[str, str]) -> Dict[str, Any]:
+async def count_absences(user_id: str, date_range: Dict[str, str]) -> Dict[str, Any]:
     """
     Count all absences for a given user within a specified date range.
 
@@ -330,25 +406,26 @@ async def kimble_count_absences(user_id: str, date_range: Dict[str, str]) -> Dic
         }
         
     except ValidationError as e:
-        logger.warning(f"Validation error in kimble_count_absences: {e}")
+        logger.warning(f"Validation error in count_absences: {e}")
         raise HTTPException(status_code=400, detail=str(e))
         
     except KimbleError as e:
-        logger.error(f"Kimble service error in kimble_count_absences: {e}")
+        logger.error(f"Kimble service error in count_absences: {e}")
         raise HTTPException(status_code=502, detail=f"Kimble service error: {e}")
         
     except Exception as e:
-        logger.error(f"Unexpected error in kimble_count_absences: {e}", exc_info=True)
+        logger.error(f"Unexpected error in count_absences: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
     # List of available tools to expose
     available_tools = [
-        kimble_fill_absence,
-        kimble_submit_week,
-        kimble_is_absent,
-        kimble_get_absences,
-        kimble_count_absences
+        fill_absence,
+        get_week_absences,
+        submit_week,
+        is_absent,
+        get_absences,
+        count_absences
     ]
     
     # Run the MCP server

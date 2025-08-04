@@ -20,24 +20,6 @@ export interface Message {
   type?: 'confirmation' | 'suggestion' | 'error' | 'success';
 }
 
-const mockResponses = [
-  {
-    triggers: ['friday', 'weather', 'sunny'],
-    response: "I understand you'd like to take Friday off if the weather is sunny! Let me check the weather forecast and your available days off. 🌤️\n\nYou currently have 12 vacation days remaining. Would you like me to provisionally book Friday and automatically confirm if the weather forecast shows sun?",
-    type: 'confirmation' as const
-  },
-  {
-    triggers: ['two days', 'next week', 'public holiday'],
-    response: "I'll help you book two days off next week, avoiding any public holidays! 📅\n\nNext week looks good - no public holidays scheduled. Your best options are:\n• Monday & Tuesday (weather looks great!)\n• Wednesday & Thursday (lighter workload)\n\nWhich days would you prefer?",
-    type: 'suggestion' as const
-  },
-  {
-    triggers: ['sick', 'emergency', 'urgent'],
-    response: "I understand this is urgent. I'll process your emergency leave request immediately. 🚨\n\nYour request has been escalated to HR for fast-track approval. You should receive confirmation within 30 minutes.",
-    type: 'success' as const
-  }
-];
-
 export const ChatInterface: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -61,7 +43,6 @@ export const ChatInterface: React.FC = () => {
   }, [messages, isTyping]);
 
   const handleSendMessage = async (text: string) => {
-    // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       text,
@@ -72,33 +53,51 @@ export const ChatInterface: React.FC = () => {
     setMessages(prev => [...prev, userMessage]);
     setIsTyping(true);
 
-    // Simulate assistant response
-    setTimeout(() => {
-      let response = "I'd be happy to help you with your leave request! Could you provide more details about the dates you'd like to take off?";
-      let responseType: Message['type'] = undefined;
+    try {
+      // Call the FastAPI backend
+      const response = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: text,
+          sender: 'user',
+          timestamp: new Date().toISOString()
+        }),
+      });
 
-      // Check for matching triggers
-      const lowerText = text.toLowerCase();
-      const matchingResponse = mockResponses.find(mock => 
-        mock.triggers.some(trigger => lowerText.includes(trigger))
-      );
-
-      if (matchingResponse) {
-        response = matchingResponse.response;
-        responseType = matchingResponse.type;
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
+      const data = await response.json();
+      
       const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: response,
+        id: data.id,
+        text: data.text,
         sender: 'assistant',
-        timestamp: new Date(),
-        type: responseType
+        timestamp: new Date(data.timestamp),
+        type: data.type === 'error' ? 'error' : undefined
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      
+      // Fallback error message
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: "I'm sorry, I'm having trouble connecting to the HR system right now. Please try again in a moment, or contact IT support if the issue persists.",
+        sender: 'assistant',
+        timestamp: new Date(),
+        type: 'error'
+      };
+
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
       setIsTyping(false);
-    }, 1500);
+    }
   };
 
   const handleSuggestBestDays = () => {
