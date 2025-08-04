@@ -115,15 +115,13 @@ class KimbleClient:
     async def fill_absence(
         self, 
         user_id: str, 
-        absence_date: date, 
-        reason: str
+        absence_date: date
     ) -> Dict[str, Any]:
         """Create or update an absence record in the database.
         
         Args:
             user_id: UUID string of the user
             absence_date: Date of absence
-            reason: Reason for absence (sick, unjustified, remote_not_logged, etc.)
             
         Returns:
             Dictionary with operation status and data
@@ -153,8 +151,6 @@ class KimbleClient:
                         update(DBAbsence)
                         .where(DBAbsence.absence_id == result.absence_id)
                         .values(
-                            reason=reason,
-                            justified=reason in ['sick'],  # Only 'sick' is marked as justified in the sample data
                             created_at=datetime.utcnow()
                         )
                     )
@@ -165,9 +161,7 @@ class KimbleClient:
                     # Create new absence
                     absence = DBAbsence(
                         user_id=user_id,
-                        date=absence_date,
-                        reason=reason,
-                        justified=reason in ['sick']  # Only 'sick' is marked as justified in the sample data
+                        date=absence_date
                     )
                     session.add(absence)
                     session.flush()  # To get the generated absence_id
@@ -187,8 +181,6 @@ class KimbleClient:
                         "absence_id": result.absence_id,
                         "user_id": result.user_id,
                         "date": result.date.isoformat() if result.date else None,
-                        "reason": result.reason,
-                        "justified": bool(result.justified),
                         "created_at": result.created_at.isoformat() if result.created_at else None
                     }
                 }
@@ -228,8 +220,6 @@ class KimbleClient:
                     return {
                         "is_absent": True,
                         "absence_id": result.absence_id,
-                        "reason": result.reason,
-                        "justified": bool(result.justified),
                         "created_at": result.created_at.isoformat() if result.created_at else None
                     }
                 return {"is_absent": False}
@@ -277,8 +267,6 @@ class KimbleClient:
                 return [{
                     "absence_id": absence.absence_id,
                     "date": absence.date.isoformat() if absence.date else None,
-                    "reason": absence.reason,
-                    "justified": bool(absence.justified),
                     "created_at": absence.created_at.isoformat() if absence.created_at else None
                 } for absence in result]
                 
@@ -291,14 +279,14 @@ class KimbleClient:
             raise KimbleError(f"Unexpected error: {e}")
             
     async def count_absences(self, user_id: str, date_range: 'DateRange') -> Dict[str, Any]:
-        """Count absences for a user within a date range, grouped by reason.
+        """Count absences for a user within a date range.
         
         Args:
             user_id: UUID string of the user
             date_range: DateRange object with start and end dates
             
         Returns:
-            Dictionary with total count and counts by reason
+            Dictionary with total count and counts
             
         Raises:
             AvatarValidationError: If input validation fails
@@ -323,21 +311,12 @@ class KimbleClient:
                 )
                 
                 result = session.execute(stmt).scalars().all()
+
                 
-                # Count by reason
-                reason_counts = {}
-                for absence in result:
-                    reason = absence.reason or 'unknown'
-                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
-                
-                # Count justified vs unjustified
-                justified_count = sum(1 for a in result if a.justified)
+
                 
                 return {
                     "total": len(result),
-                    "by_reason": reason_counts,
-                    "justified": justified_count,
-                    "unjustified": len(result) - justified_count
                 }
                 
         except SQLAlchemyError as e:
@@ -421,13 +400,11 @@ class KimbleClient:
                 # Pick a random date in the range
                 days_offset = random.randint(0, delta.days)
                 absence_date = date_range.start + timedelta(days=days_offset)
-                reason = random.choice(['SICK', 'VAC', 'OTHER'])
                 
                 absences.append({
                     'id': str(uuid4()),
                     'userId': user_id,
                     'date': absence_date.isoformat(),
-                    'reason': reason,
                     'status': random.choice(['APPROVED', 'PENDING_APPROVAL', 'REJECTED']),
                     'createdAt': (absence_date - timedelta(days=1)).isoformat()
                 })

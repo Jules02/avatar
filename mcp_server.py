@@ -13,6 +13,7 @@ from exceptions import (
     ServiceError, ValidationError, KimbleError,
     handle_error
 )
+from clients.kimble import DateRange
 from clients.kimble import KimbleClient
 
 # Configure logging
@@ -21,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 class Config(BaseModel):
     """Configuration for the Kimble MCP server."""
-    KIMBLE_BASE_URL: str = os.getenv("KIMBLE_BASE_URL", "https://api.kimble.example.com")
-    KIMBLE_API_KEY: str = os.getenv("KIMBLE_API_KEY", "")
+    #KIMBLE_BASE_URL: str = os.getenv("KIMBLE_BASE_URL", "https://api.kimble.example.com")
+    #KIMBLE_API_KEY: str = os.getenv("KIMBLE_API_KEY", "")
     #
     # @field_validator('KIMBLE_BASE_URL')
     # @classmethod
@@ -63,14 +64,13 @@ except Exception as e:
     raise
 
 @mcp.tool()
-async def kimble_fill_absence(user_id: str, absence_date: str, reason: str) -> Dict[str, Any]:
+async def kimble_fill_absence(user_id: str, absence_date: str) -> Dict[str, Any]:
     """
-    Fill an absence for a given date and reason on the Kimble database.
+    Fill an absence for a given date on the Kimble database.
 
     Args:
         user_id: The UUID of the user
         absence_date: The date of the absence in YYYY-MM-DD format
-        reason: The reason for the absence (sick, unjustified, remote_not_logged, etc.)
 
     Returns:
         Dict containing the result of the operation
@@ -79,7 +79,6 @@ async def kimble_fill_absence(user_id: str, absence_date: str, reason: str) -> D
         HTTPException: With status code 400 for validation errors or 500 for server errors
     """
     try:
-        # Input validation
         if not user_id or not isinstance(user_id, str):
             raise ValidationError("User ID must be a valid UUID string")
             
@@ -87,40 +86,14 @@ async def kimble_fill_absence(user_id: str, absence_date: str, reason: str) -> D
             absence_date_obj = datetime.strptime(absence_date, "%Y-%m-%d").date()
         except ValueError as e:
             raise ValidationError(f"Invalid date format. Expected YYYY-MM-DD: {e}")
-            
-        # Define possible reasons and their variations
-        REASON_MAPPING = {
-            'sick': ['sick', 'ill', 'unwell', 'not feeling well', 'under the weather'],
-            'unjustified': ['unjustified', 'no reason', 'no show', 'absent without notice'],
-            'remote_not_logged': ['remote not logged', 'forgot to log', 'missed logging']
-        }
-        
-        # Flatten the mapping for fuzzy matching
-        all_reasons = []
-        for main_reason, variations in REASON_MAPPING.items():
-            all_reasons.extend([(v, main_reason) for v in [main_reason] + variations])
-        
-        # Use fuzzy matching to find the best match
-        reason_lower = reason.lower()
-        best_match, score = process.extractOne(reason_lower, [r[0] for r in all_reasons])
-        
-        # If we have a good match (score > 70), use the mapped reason
-        if score > 70:
-            reason = next((r[1] for r in all_reasons if r[0] == best_match), 'unjustified')
-        else:
-            # If no good match, default to 'unjustified' but log the original reason
-            original_reason = reason
-            reason = 'unjustified'
-            logger.info(f"No good match for reason '{original_reason}'. Defaulting to 'unjustified'")
-        
+
         # Call Kimble client
         result = await kimble_client.fill_absence(
             user_id=user_id,
-            absence_date=absence_date_obj,
-            reason=reason
+            absence_date=absence_date_obj
         )
         
-        logger.info(f"Successfully filled absence for user {user_id} on {absence_date} with reason: {reason}")
+        logger.info(f"Successfully filled absence for user {user_id} on {absence_date}")
         return {"status": "success", "data": result}
         
     except ValidationError as e:
@@ -151,10 +124,6 @@ async def kimble_submit_week(user_id: int, week_no: int) -> Dict[str, Any]:
         HTTPException: With status code 400 for validation errors or 500 for server errors
     """
     try:
-        # Input validation
-        #if not isinstance(user_id, int) or user_id <= 0:
-        #   raise ValidationError("User ID must be a positive integer")
-            
         if not isinstance(week_no, int) or not (1 <= week_no <= 53):
             raise ValidationError("Week number must be between 1 and 53")
         
@@ -195,9 +164,6 @@ async def kimble_is_absent(user_id: str, date: str) -> Dict[str, Any]:
         HTTPException: With status code 400 for validation errors or 500 for server errors
     """
     try:
-        # Input validation
-        if not user_id or not isinstance(user_id, str):
-            raise ValidationError("User ID must be a valid UUID string")
             
         try:
             check_date = datetime.strptime(date, "%Y-%m-%d").date()
@@ -220,7 +186,6 @@ async def kimble_is_absent(user_id: str, date: str) -> Dict[str, Any]:
         if absence_info:
             response["data"].update({
                 "absence_id": absence_info.get("absence_id"),
-                "reason": absence_info.get("reason"),
                 "justified": absence_info.get("justified", False),
                 "created_at": absence_info.get("created_at")
             })
@@ -256,9 +221,6 @@ async def kimble_get_absences(user_id: str, date_range: Dict[str, str]) -> Dict[
         HTTPException: With status code 400 for validation errors or 500 for server errors
     """
     try:
-        # Input validation
-        if not user_id or not isinstance(user_id, str):
-            raise ValidationError("User ID must be a valid UUID string")
             
         if not isinstance(date_range, dict) or 'start' not in date_range or 'end' not in date_range:
             raise ValidationError("date_range must be a dictionary with 'start' and 'end' dates")
@@ -270,15 +232,11 @@ async def kimble_get_absences(user_id: str, date_range: Dict[str, str]) -> Dict[
             if start_date > end_date:
                 raise ValidationError("Start date cannot be after end date")
                 
-            # Validate date range is not too large (e.g., max 1 year)
-            if (end_date - start_date).days > 365:
-                raise ValidationError("Date range cannot exceed 1 year")
-                
         except ValueError as e:
             raise ValidationError(f"Invalid date format. Expected YYYY-MM-DD: {e}")
         
         # Create date range object
-        date_range_obj = KimbleDateRange(start=start_date, end=end_date)
+        date_range_obj = DateRange(start=start_date, end=end_date)
         
         # Call Kimble client
         absences = await kimble_client.get_absences(user_id, date_range_obj)
@@ -346,9 +304,8 @@ async def kimble_count_absences(user_id: str, date_range: Dict[str, str]) -> Dic
                 
         except ValueError as e:
             raise ValidationError(f"Invalid date format. Expected YYYY-MM-DD: {e}")
-        
-        # Create date range object
-        date_range_obj = KimbleDateRange(start=start_date, end=end_date)
+
+        date_range_obj = DateRange(start=start_date, end=end_date)
         
         # Call Kimble client to count absences
         counts = await kimble_client.count_absences(user_id, date_range_obj)
@@ -367,7 +324,6 @@ async def kimble_count_absences(user_id: str, date_range: Dict[str, str]) -> Dic
                     "end": end_date.isoformat()
                 },
                 "total_absences": counts["total"],
-                "by_reason": counts["by_reason"],
                 "justified": counts["justified"],
                 "unjustified": counts["unjustified"]
             }

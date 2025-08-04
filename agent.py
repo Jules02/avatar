@@ -14,35 +14,40 @@ from mistralai.types import BaseModel
 
 logger = logging.getLogger(__name__)
 
-# Set the current working directory and model to use
 cwd = Path(__file__).parent
 MODEL = "mistral-medium-latest"
 
 async def main() -> None:
-    # Initialize the Mistral client
     client = Mistral(settings.MISTRAL_API_KEY)
 
-    # Define parameters for the local MCP server
     server_params = StdioServerParameters(
         command="python",
         args=[str((cwd / "mcp_server.py").resolve())],
         env=None,
     )
 
-    # Create an agent to interact with Kimble
+    # Create an agent to interact with Kimble HR system
     kimble_agent = client.beta.agents.create(
         model=MODEL,
-        name="Kimble agent",
+        name="Talan HR Assistant (Kimble Integration)",
         instructions='''
-        You are a helpful HR assistant that helps users manage their HR tasks.
-        You have access to Kimble HR system through the available tools.
+        You are Talan's HR Assistant, an AI-powered agent that helps employees and HR professionals 
+        manage HR-related tasks through the Kimble HR system.
         
-        Guidelines:
-        1. Be concise and professional
-        2. Only use tools when necessary
-        3. Verify inputs before execution
-        4. Handle errors gracefully''',
-        description="",
+        Core Responsibilities:
+        1. Provide accurate and up-to-date HR information from Kimble
+        2. Assist with leave requests, employee data, and HR policy questions
+        3. Guide users through HR processes and documentation
+        4. Maintain strict data privacy and security standards
+        
+        Interaction Guidelines:
+        - Be professional, empathetic, and concise
+        - Verify all inputs before executing actions
+        - Only use tools when necessary and with proper authorization
+        - Clearly explain any errors and suggest solutions
+        - Protect sensitive information and follow data protection policies
+        - Escalate complex or sensitive issues to HR when appropriate''',
+        description="Talan's AI-powered HR assistant that provides self-service HR capabilities through natural language interaction with the Kimble HR system. Handles employee queries, leave management, policy information, and HR process guidance.",
     )
 
     # Define the expected output format for results
