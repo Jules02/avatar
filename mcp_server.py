@@ -417,6 +417,19 @@ async def count_absences(user_id: str, date_range: Dict[str, str]) -> Dict[str, 
         logger.error(f"Unexpected error in count_absences: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@mcp.tool()
+async def get_activity_report(user_id: str, date_range: DateRange) -> Dict[str, Any]:
+    """
+    Get activity report for a given date range.
+
+    Args:
+        user_id: The UUID of the user
+        date_range: A date range object with start and end dates
+
+    Returns:
+        Dict containing the activity for the desired date range.
+    """
+
 if __name__ == "__main__":
     # List of available tools to expose
     available_tools = [

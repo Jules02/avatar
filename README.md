@@ -1,7 +1,7 @@
 # Avatar HR Assistant
 
-This project aims at reimagining User Experience with HR processes. Today at Talan, employees need to fill workforce reports on the platform Kimble - which are then validated by managers - approximately every week. When they want to declare a leave, they have to fill a form on another platform - Successfactors - which also needs to be validated by managers.
-The goal of this project is to redesign these workflows by offering a new prompt-centric User Experience. From a ChatGPT-like interface, employees should be able to declare what days they worked / were absent (Kimble) and submit their records, but also trigger more complex and intelligent workflows.
+This project aims at reimagining User Experience with HR processes. Today at Talan, employees need to fill activity reports on the platform Kimble - which are then validated by managers - approximately every week. When they want to declare a leave, they have to fill a form on another platform - Successfactors - which also needs to be validated by managers.
+The goal of this project is to redesign these workflows by offering a new prompt-centric User Experience. From a ChatGPT-like interface, employees should be able to declare what days they worked / were absent (Kimble) and submit their activity records, but also trigger more complex and intelligent workflows. The project is not aimed to be specific to Kimble and Successfactors - it should adapt to all such information systems.
 
 ## Prerequisites
 
