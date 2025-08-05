@@ -1,14 +1,76 @@
-from datetime import date, timedelta, datetime
+from datetime import date, datetime, timedelta
+from uuid import uuid4
 from typing import List, Dict, Any, Optional, Literal
 from pydantic import BaseModel, field_validator, ValidationError
-import httpx
-import random
+from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, Boolean, ForeignKey, select, update, delete
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.exc import SQLAlchemyError
 import logging
-from uuid import uuid4
+import os
+import random
+from contextlib import asynccontextmanager
 
 from exceptions import KimbleError, ValidationError as AvatarValidationError, handle_error
 
 logger = logging.getLogger(__name__)
+
+# SQLAlchemy setup
+Base = declarative_base()
+
+class DBAbsence(Base):
+    """Database model for absences."""
+    __tablename__ = 'absences'
+    
+    absence_id = Column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id = Column(String(36), index=True, nullable=True)
+    date = Column(Date, index=True, nullable=True)
+    reason = Column(String(100), nullable=True)
+    justified = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=True)
+    
+    __table_args__ = (
+        {'schema': 'eis'},
+    )
+
+class DBConnection:
+    """Manages database connections."""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+    
+    def _initialize(self):
+        """Initialize the database connection."""
+        # Default to local development settings if DATABASE_URL is not set
+        db_url = os.getenv('DATABASE_URL', 'mysql+pymysql://eis_user:eis_pass@127.0.0.1:3307/eis')
+        self.engine = create_engine(
+            db_url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            pool_size=5,
+            max_overflow=10,
+            echo=os.getenv('SQL_ECHO', 'False').lower() == 'true'
+        )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        
+        # Don't create tables automatically - they should be created by the SQL script
+        # Base.metadata.create_all(bind=self.engine)
+    
+    @asynccontextmanager
+    async def get_db(self):
+        """Async context manager for database sessions."""
+        db = self.SessionLocal()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
 class DateRange(BaseModel):
     """Represents a date range with start and end dates."""
@@ -30,85 +92,246 @@ class DateRange(BaseModel):
         return v
 
 class KimbleClient:
-    """Client for interacting with the Kimble API."""
+    """Client for interacting with the Kimble database."""
     
-    def __init__(self, base_url: str, api_key: str):
-        """Initialize the Kimble client.
-        
-        Args:
-            base_url: Base URL of the Kimble API
-            api_key: API key for authentication
-        """
-        self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
-        self.client = httpx.AsyncClient(
-            base_url=base_url,
-            headers={
-                'Authorization': f'Bearer {api_key}',
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            timeout=30.0
-        )
+    def __init__(self):
+        """Initialize the Kimble database client."""
+        self.db = DBConnection()
 
     async def __aenter__(self):
+        """Async context manager entry."""
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
         await self.close()
 
     async def close(self):
-        """Close the HTTP client."""
-        await self.client.aclose()
+        """Close the database connection."""
+        if hasattr(self, 'db'):
+            # Clean up any resources if needed
+            pass
 
-    async def fill_absence(self, user_id: int, absence_date: date, reason: str) -> Dict[str, Any]:
-        """Fill an absence for a user (fake implementation).
+    async def fill_absence(
+        self, 
+        user_id: str, 
+        absence_date: date
+    ) -> Dict[str, Any]:
+        """Create or update an absence record in the database.
         
         Args:
-            user_id: ID of the user
-            absence_date: Date of the absence
-            reason: Reason for absence (e.g., 'SICK', 'VAC')
+            user_id: UUID string of the user
+            absence_date: Date of absence
             
         Returns:
-            Dict: Response with absence details
+            Dictionary with operation status and data
             
         Raises:
-            KimbleError: If there's an error creating the absence
-            ValidationError: If the input validation fails
+            AvatarValidationError: If input validation fails
+            KimbleError: If database operation fails
         """
+        if not user_id:
+            raise AvatarValidationError("User ID is required")
+            
+        if absence_date > date.today():
+            raise AvatarValidationError("Cannot create absence for future dates")
+            
         try:
-            # Validate inputs
-            if not isinstance(user_id, int) or user_id <= 0:
-                raise AvatarValidationError("User ID must be a positive integer")
+            async with self.db.get_db() as session:
+                # Check if absence already exists for this user and date
+                stmt = select(DBAbsence).where(
+                    (DBAbsence.user_id == user_id) & 
+                    (DBAbsence.date == absence_date)
+                )
+                result = session.execute(stmt).scalar_one_or_none()
                 
-            if not isinstance(absence_date, date):
-                raise AvatarValidationError("Invalid date format")
+                if result:
+                    # Update existing absence
+                    stmt = (
+                        update(DBAbsence)
+                        .where(DBAbsence.absence_id == result.absence_id)
+                        .values(
+                            created_at=datetime.utcnow()
+                        )
+                    )
+                    session.execute(stmt)
+                    action = "updated"
+                    absence_id = result.absence_id
+                else:
+                    # Create new absence
+                    absence = DBAbsence(
+                        user_id=user_id,
+                        date=absence_date
+                    )
+                    session.add(absence)
+                    session.flush()  # To get the generated absence_id
+                    absence_id = absence.absence_id
+                    action = "created"
                 
-            if reason not in ['SICK', 'VAC', 'OTHER']:
-                raise AvatarValidationError("Reason must be one of: 'SICK', 'VAC', 'OTHER'")
+                session.commit()
                 
-            # Simulate a potential error (10% chance)
-            if random.random() < 0.1:
-                raise KimbleError("Failed to create absence: Service unavailable")
+                # Get the updated/created record
+                stmt = select(DBAbsence).where(DBAbsence.absence_id == absence_id)
+                result = session.execute(stmt).scalar_one()
                 
-            return {
-                'id': str(uuid4()),
-                'userId': user_id,
-                'date': absence_date.isoformat(),
-                'reason': reason,
-                'status': 'PENDING_APPROVAL',
-                'submittedAt': date.today().isoformat(),
-                'message': 'Absence request submitted successfully (FAKE DATA)'
-            }
+                return {
+                    "status": "success",
+                    "action": action,
+                    "data": {
+                        "absence_id": result.absence_id,
+                        "user_id": result.user_id,
+                        "date": result.date.isoformat() if result.date else None,
+                        "created_at": result.created_at.isoformat() if result.created_at else None
+                    }
+                }
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in fill_absence: {e}")
+            raise KimbleError(f"Database operation failed: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error in fill_absence: {e}")
+            raise KimbleError(f"Failed to process absence: {e}")
+                
+    async def is_absent(self, user_id: str, check_date: date) -> Dict[str, Any]:
+        """Check if a user is absent on a specific date.
+        
+        Args:
+            user_id: UUID string of the user
+            check_date: Date to check for absence
+            
+        Returns:
+            Dictionary with absence information if found, None otherwise
+            
+        Raises:
+            AvatarValidationError: If input validation fails
+            KimbleError: If database operation fails
+        """
+        if not user_id:
+            raise AvatarValidationError("User ID is required")
+            
+        try:
+            async with self.db.get_db() as session:
+                stmt = select(DBAbsence).where(
+                    (DBAbsence.user_id == user_id) & 
+                    (DBAbsence.date == check_date)
+                )
+                result = session.execute(stmt).scalar_one_or_none()
+                
+                if result:
+                    return {
+                        "is_absent": True,
+                        "absence_id": result.absence_id,
+                        "created_at": result.created_at.isoformat() if result.created_at else None
+                    }
+                return {"is_absent": False}
+                
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in is_absent: {e}")
+            raise KimbleError(f"Database operation failed: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error in is_absent: {e}")
+            raise KimbleError(f"Failed to process absence: {e}")
+
+    async def get_absences(self, user_id: str, date_range: 'DateRange') -> List[Dict[str, Any]]:
+        """Get all absences for a user within a date range.
+        
+        Args:
+            user_id: UUID string of the user
+            date_range: DateRange object with start and end dates
+            
+        Returns:
+            List of dictionaries with absence details
+            
+        Raises:
+            AvatarValidationError: If input validation fails
+            KimbleError: If database operation fails
+        """
+        if not user_id:
+            raise AvatarValidationError("User ID is required")
+            
+        if not date_range or not date_range.start or not date_range.end:
+            raise AvatarValidationError("Invalid date range provided")
+            
+        if date_range.start > date_range.end:
+            raise AvatarValidationError("Start date cannot be after end date")
+            
+        try:
+            async with self.db.get_db() as session:
+                stmt = select(DBAbsence).where(
+                    (DBAbsence.user_id == user_id) & 
+                    (DBAbsence.date >= date_range.start) & 
+                    (DBAbsence.date <= date_range.end)
+                ).order_by(DBAbsence.date)
+                
+                result = session.execute(stmt).scalars().all()
+                
+                return [{
+                    "absence_id": absence.absence_id,
+                    "date": absence.date.isoformat() if absence.date else None,
+                    "created_at": absence.created_at.isoformat() if absence.created_at else None
+                } for absence in result]
+                
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in get_absences: {e}")
+            raise KimbleError(f"Database operation failed: {e}")
             
         except Exception as e:
-            handle_error(e)
+            logger.error(f"Unexpected error in get_absences: {e}", exc_info=True)
+            raise KimbleError(f"Unexpected error: {e}")
+            
+    async def count_absences(self, user_id: str, date_range: 'DateRange') -> Dict[str, Any]:
+        """Count absences for a user within a date range.
+        
+        Args:
+            user_id: UUID string of the user
+            date_range: DateRange object with start and end dates
+            
+        Returns:
+            Dictionary with total count and counts
+            
+        Raises:
+            AvatarValidationError: If input validation fails
+            KimbleError: If database operation fails
+        """
+        if not user_id:
+            raise AvatarValidationError("User ID is required")
+            
+        if not date_range or not date_range.start or not date_range.end:
+            raise AvatarValidationError("Invalid date range provided")
+            
+        if date_range.start > date_range.end:
+            raise AvatarValidationError("Start date cannot be after end date")
+            
+        try:
+            async with self.db.get_db() as session:
+                # Get all absences in the date range
+                stmt = select(DBAbsence).where(
+                    (DBAbsence.user_id == user_id) & 
+                    (DBAbsence.date >= date_range.start) & 
+                    (DBAbsence.date <= date_range.end)
+                )
+                
+                result = session.execute(stmt).scalars().all()
 
-    async def submit_week(self, user_id: int, week_no: int) -> Dict[str, Any]:
+                
+
+                
+                return {
+                    "total": len(result),
+                }
+                
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in count_absences: {e}")
+            raise KimbleError(f"Database operation failed: {e}")
+            
+        except Exception as e:
+            logger.error(f"Unexpected error in count_absences: {e}", exc_info=True)
+            raise KimbleError(f"Unexpected error: {e}")
+
+    async def submit_week(self, user_id: str, week_no: int) -> Dict[str, Any]:
         """Submit a week for approval (fake implementation).
 
         Args:
-            user_id: ID of the user
+            user_id: UUID of the user
             week_no: Week number to submit (1-53)
 
         Returns:
@@ -120,8 +343,8 @@ class KimbleClient:
         """
         try:
             # Validate inputs
-            if not isinstance(user_id, int) or user_id <= 0:
-                raise AvatarValidationError("User ID must be a positive integer")
+            #if not isinstance(user_id, int) or user_id <= 0:
+            #   raise AvatarValidationError("User ID must be a positive integer")
                 
             if not isinstance(week_no, int) or not (1 <= week_no <= 53):
                 raise AvatarValidationError("Week number must be between 1 and 53")
@@ -146,7 +369,7 @@ class KimbleClient:
         """Get absences for a user within a date range (fake implementation).
         
         Args:
-            user_id: ID of the user
+            user_id: UUID of the user
             date_range: Date range to search for absences
             
         Returns:
@@ -158,8 +381,8 @@ class KimbleClient:
         """
         try:
             # Validate inputs
-            if not isinstance(user_id, int) or user_id <= 0:
-                raise AvatarValidationError("User ID must be a positive integer")
+            #if not isinstance(user_id, int) or user_id <= 0:
+            #   raise AvatarValidationError("User ID must be a positive integer")
                 
             if not isinstance(date_range, DateRange):
                 raise AvatarValidationError("Invalid date range provided")
@@ -177,13 +400,11 @@ class KimbleClient:
                 # Pick a random date in the range
                 days_offset = random.randint(0, delta.days)
                 absence_date = date_range.start + timedelta(days=days_offset)
-                reason = random.choice(['SICK', 'VAC', 'OTHER'])
                 
                 absences.append({
                     'id': str(uuid4()),
                     'userId': user_id,
                     'date': absence_date.isoformat(),
-                    'reason': reason,
                     'status': random.choice(['APPROVED', 'PENDING_APPROVAL', 'REJECTED']),
                     'createdAt': (absence_date - timedelta(days=1)).isoformat()
                 })
@@ -193,7 +414,7 @@ class KimbleClient:
         except Exception as e:
             handle_error(e)
 
-    async def count_absences(self, user_id: int, date_range: DateRange) -> int:
+    async def count_absences(self, user_id: str, date_range: DateRange) -> int:
         """Count absences for a user within a date range.
         
         Args:
@@ -206,7 +427,7 @@ class KimbleClient:
         absences = await self.get_absences(user_id, date_range)
         return len(absences)
 
-    async def is_absent(self, user_id: int, check_date: date) -> bool:
+    async def is_absent(self, user_id: str, check_date: date) -> bool:
         """Check if a user is absent on a specific date (fake implementation).
         
         Args:
@@ -222,8 +443,8 @@ class KimbleClient:
         """
         try:
             # Validate inputs
-            if not isinstance(user_id, int) or user_id <= 0:
-                raise AvatarValidationError("User ID must be a positive integer")
+            #if not isinstance(user_id, int) or user_id <= 0:
+            #    raise AvatarValidationError("User ID must be a positive integer")
                 
             if not isinstance(check_date, date):
                 raise AvatarValidationError("Invalid date format")

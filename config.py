@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     MCP_SERVER_PORT: int = 8000
     
     # Kimble API settings
-    KIMBLE_BASE_URL: str = Field(..., validation_alias="KIMBLE_BASE_URL")
-    KIMBLE_API_KEY: str = Field(..., validation_alias="KIMBLE_API_KEY")
+    #KIMBLE_BASE_URL: str = Field(..., validation_alias="KIMBLE_BASE_URL")
+    #KIMBLE_API_KEY: str = Field(..., validation_alias="KIMBLE_API_KEY")
     
     @field_validator("MISTRAL_API_KEY")
     @classmethod
